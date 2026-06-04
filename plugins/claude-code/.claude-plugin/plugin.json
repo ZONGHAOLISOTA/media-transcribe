@@ -1,0 +1,6 @@
+{
+  "name": "media-transcribe",
+  "description": "Transcribe video/audio to clean text by driving the media-transcribe CLI. Thin adapter — no transcription logic of its own.",
+  "author": { "name": "Zonghao Li" },
+  "homepage": "https://github.com/ZONGHAOLISOTA/media-transcribe"
+}

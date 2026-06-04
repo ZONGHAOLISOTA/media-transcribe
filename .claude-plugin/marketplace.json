@@ -1,0 +1,12 @@
+{
+  "name": "media-transcribe",
+  "owner": { "name": "Zonghao Li" },
+  "description": "Claude Code adapter for the media-transcribe CLI.",
+  "plugins": [
+    {
+      "name": "media-transcribe",
+      "source": "./plugins/claude-code",
+      "description": "Transcribe video/audio to text by driving the media-transcribe CLI."
+    }
+  ]
+}

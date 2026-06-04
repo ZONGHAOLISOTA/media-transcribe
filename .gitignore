@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated outputs / media (keep large binaries & transcripts out of git)
+audio/
+transcripts/
+*.wav
+*.mp4
+*.mkv
+*.mov
+*.m4a
+*.mp3
+*.flac
+
+# OS
+.DS_Store
+
+# Local-only design / dev-process docs (kept locally, not published)
+docs/DESIGN.md

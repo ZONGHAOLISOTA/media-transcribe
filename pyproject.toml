@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "media-transcribe"
+version = "0.1.0"
+description = "AI-native, engine-pluggable media-to-text CLI (Qwen MLX + pluggable backends)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Zonghao Li", email = "lzonghao@umich.edu" }]
+keywords = ["transcription", "asr", "speech-to-text", "qwen", "mlx", "ffmpeg", "whisper"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = ["PyYAML>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/ZONGHAOLISOTA/media-transcribe"
+
+[project.scripts]
+media-transcribe = "media_transcribe.cli:main"
+
+# Third-party engines self-register here, e.g.:
+#   my-engine = "my_pkg.my_engine:MyEngine"
+[project.entry-points."media_transcribe.engines"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/media_transcribe"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

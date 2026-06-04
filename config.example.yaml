@@ -1,0 +1,7 @@
+# media-transcribe configuration — all keys optional; CLI flags override these.
+engine: qwen-mlx
+language: zh
+context_file: null           # optional: path to a domain-vocab file (terms, whitespace/newline-separated)
+context: ""                  # inline terms, merged with context_file
+output_dir: null             # default: <input-dir>/transcripts. Set a path to override (taken as given, relative to cwd).
+recursive: false
