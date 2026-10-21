@@ -21,8 +21,8 @@ def needs_segments(options: Options, fmt: str) -> bool:
 
 
 def _is_chinese(language: str) -> bool:
-    return language.lower() in ("zh", "zh-cn", "zh-hans", "zh-tw", "cmn", "yue", "chinese",
-                                "cantonese")
+    code = language.lower().replace("_", "-")
+    return code.startswith("zh") or code in ("cmn", "yue", "chinese", "cantonese", "mandarin")
 
 
 def speaker_names(segments: list[Segment], language: str) -> dict[str, str]:

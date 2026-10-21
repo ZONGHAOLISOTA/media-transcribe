@@ -11,6 +11,10 @@ Both manifest as duplicate / context-leaking sentences at the tail. We:
   - collapse runs of consecutive identical sentences, then
   - drop trailing sentences that are context-string echoes or empty.
 
+A context echo is a tail sentence made *mostly* of context terms; a real sentence
+that merely mentions a few of them is kept. Sentences are split on CJK enders only,
+so a whole English transcript is one "sentence" here and must never qualify.
+
 ``clean_segments`` applies the same rules to timed segments (one segment is
 roughly one sentence).
 """
@@ -18,12 +22,14 @@ roughly one sentence).
 from __future__ import annotations
 
 import re
+import string
 from dataclasses import replace
 
 from .datatypes import Segment
 
 _SENT_END = "。！？\n"
 _SPLIT_RE = re.compile(r"(。|！|？|\n)")
+_TOKEN_STRIP = string.punctuation + "，。！？、；：“”‘’（）《》"
 
 # Mandarin hesitation / filler sounds; a tail sentence made only of these is dropped.
 _FILLER = set("嗯呃啊哦唔呢嘛吧呀诶欸哎额嗨")
@@ -50,12 +56,20 @@ def _key(sentence: str) -> str:
     return sentence.rstrip(_SENT_END + " ")
 
 
+def _is_context_echo(sentence: str, ctx: set[str]) -> bool:
+    """At least three context terms, making up at least half of the sentence's words."""
+    tokens = [t.strip(_TOKEN_STRIP) for t in sentence.split()]
+    tokens = [t for t in tokens if t]
+    hits = sum(1 for t in tokens if t in ctx)
+    return hits >= 3 and 2 * hits >= len(tokens)
+
+
 def _is_junk_tail(sentence: str, ctx: set[str]) -> bool:
     """True if a tail sentence is empty, a context-vocabulary echo, or pure filler."""
     tail = sentence.strip().rstrip(_SENT_END)
     if not tail:
         return True
-    if ctx and len(set(tail.split()) & ctx) >= 3:
+    if ctx and _is_context_echo(tail, ctx):
         return True
     return all(ch in _FILLER for ch in tail)
 
@@ -90,13 +104,18 @@ def clean(text: str, context_terms: list[str] | None = None) -> str:
 def clean_segments(
     segments: list[Segment], context_terms: list[str] | None = None
 ) -> list[Segment]:
-    """Segment-level ``clean``: merge consecutive duplicates, strip a junk tail."""
+    """Segment-level ``clean``: merge consecutive duplicates, strip a junk tail.
+
+    Like ``clean``, only sentences ending in 。！？ are collapsed, so an English
+    "Okay. Okay." survives in both modes.
+    """
     out: list[Segment] = []
     for seg in segments:
         if not seg.text.strip():
             continue
         prev = out[-1] if out else None
-        if prev and prev.speaker == seg.speaker and _key(prev.text) == _key(seg.text):
+        if (prev and prev.speaker == seg.speaker and _key(prev.text) == _key(seg.text)
+                and seg.text.rstrip()[-1:] in "。！？"):
             out[-1] = replace(prev, end=max(prev.end, seg.end))
             continue
         out.append(seg)

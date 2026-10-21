@@ -144,6 +144,44 @@ def test_bad_config_values_exit_2(tmp_path, yaml_text):
     assert main([str(tmp_path), "--config", str(cfg), "--dry-run"]) == 2
 
 
+def test_no_flags_switch_off_config_defaults(tmp_path):
+    opts = _options(tmp_path, "diarize: true\ntimestamps: true\n",
+                    ["--no-diarize", "--no-timestamps"])
+    assert (opts.diarize, opts.timestamps) == (False, False)
+
+
+def test_null_format_means_default(tmp_path, capsys):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("format: null\nrecursive: \"false\"\n", encoding="utf-8")
+    assert main([str(tmp_path), "--config", str(cfg), "--dry-run"]) == 0
+    assert "a.txt" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("yaml_text", ["output_dir: 5\n", "context_file: [a, b]\n",
+                                       "recursive: sometimes\n"])
+def test_mistyped_config_paths_exit_2_without_traceback(tmp_path, yaml_text):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(yaml_text, encoding="utf-8")
+    assert main([str(tmp_path), "--config", str(cfg), "--dry-run"]) == 2
+
+
+def test_non_utf8_context_file_exits_2(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    vocab = tmp_path / "vocab.txt"
+    vocab.write_bytes("术语".encode("gbk"))
+    assert main([str(tmp_path), "--context-file", str(vocab), "--dry-run"]) == 2
+
+
+def test_verbose_prints_the_settings(tmp_path, capsys):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    assert main([str(tmp_path), "--dry-run", "-v", "--diarize", "--num-speakers", "2",
+                 "--model", "1.7b"]) == 0
+    err = capsys.readouterr().err
+    assert "model=1.7b" in err and "diarize=on (num_speakers=2)" in err
+
+
 def test_config_supplies_new_options(tmp_path, capsys):
     (tmp_path / "a.mp4").write_bytes(b"x")
     cfg = tmp_path / "c.yaml"

@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
                           f"{', '.join(available_engines()) or 'none'})")
 
     spk = p.add_argument_group("speakers (interviews, meetings)")
-    spk.add_argument("--diarize", action="store_true", default=None,
+    spk.add_argument("--diarize", action=argparse.BooleanOptionalAction, default=None,
                      help='label who speaks: "说话人 1：..." for zh, "Speaker 1: ..." '
                           "otherwise; needs a one-time setup, see --doctor")
     spk.add_argument("--num-speakers", type=int, default=None, metavar="N",
@@ -85,13 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="at most N speakers when detecting")
 
     out = p.add_argument_group("output")
-    out.add_argument("--timestamps", action="store_true", default=None,
+    out.add_argument("--timestamps", action=argparse.BooleanOptionalAction, default=None,
                      help="start each line with its [hh:mm:ss] time")
     out.add_argument("--format", dest="fmt", default=None, choices=FORMATS, metavar="FMT",
                      help=f"{' | '.join(FORMATS)} (default: txt; srt/vtt/tsv are timed)")
     out.add_argument("--out", dest="out", type=Path, default=None, metavar="DIR",
                      help="output folder (default: <input folder>/transcripts)")
-    out.add_argument("--recursive", action="store_true", default=None,
+    out.add_argument("--recursive", action=argparse.BooleanOptionalAction, default=None,
                      help="include subfolders")
     out.add_argument("--overwrite", action="store_true",
                      help="redo files that already have a transcript")
@@ -104,7 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
     oth.add_argument("--config", type=Path, default=None, metavar="FILE",
                      help="YAML file with defaults for these options "
                           "(see config.example.yaml)")
-    oth.add_argument("-v", "--verbose", action="store_true", help="more output")
+    oth.add_argument("-v", "--verbose", action="store_true",
+                     help="also print the settings in effect")
     oth.add_argument("--version", action="version", version=f"media-transcribe {__version__}")
     oth.add_argument("-h", "--help", action="help", help="show this help and exit")
     return p
@@ -146,7 +147,7 @@ def _speaker_count(value, name: str) -> int | None:
 
 def _build_options(args: argparse.Namespace, cfg: dict) -> tuple[Options, str]:
     """Resolve and validate the engine options and output format (raises ValueError)."""
-    fmt = str(_pick(args.fmt, cfg["format"])).lower()
+    fmt = str(_pick(args.fmt, cfg["format"]) or "txt").lower()
     if fmt not in FORMATS:
         raise ValueError(f"unknown format {fmt!r}; choose one of {', '.join(FORMATS)}")
     model = _pick(args.model, cfg["model"])
@@ -204,10 +205,18 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_doctor(engine_name, options)
 
-    language = args.language or cfg["language"]
-    recursive = args.recursive if args.recursive is not None else bool(cfg["recursive"])
+    language = str(args.language or cfg["language"])
     context_file = args.context_file or cfg.get("context_file")
     context_inline = args.context if args.context is not None else cfg.get("context")
+    try:
+        recursive = _flag(_pick(args.recursive, cfg["recursive"]), "recursive")
+        for name, value in (("output_dir", cfg.get("output_dir")),
+                            ("context_file", context_file), ("context", context_inline)):
+            if value is not None and not isinstance(value, (str, Path)):
+                raise ValueError(f"{name} must be text, got {value!r}")
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     root: Path = args.path
     if not root.exists():
@@ -233,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
 
     needed = options.requested_features() | (
         {FEATURE_TIMESTAMPS} if fmt in TIMED_FORMATS else set())
-    missing = needed - set(engine.features)
+    missing = needed - set(getattr(engine, "features", ()))
     if missing:
         print(f"error: engine {engine_name!r} does not support: "
               f"{', '.join(sorted(missing))}", file=sys.stderr)
@@ -250,9 +259,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         context_terms = _resolve_context(context_file, context_inline)
-    except OSError as e:
-        print(f"error: {e}", file=sys.stderr)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"error: cannot read context file {context_file}: {e}", file=sys.stderr)
         return 2
+
+    if args.verbose:
+        counts = {k: getattr(options, k) for k in ("num_speakers", "min_speakers", "max_speakers")}
+        speakers = ", ".join(f"{k}={v}" for k, v in counts.items() if v is not None)
+        print(f"settings: engine={engine_name} model={options.model or 'default'} "
+              f"lang={language} format={fmt} diarize={'on' if options.diarize else 'off'}"
+              f"{' (' + speakers + ')' if speakers else ''} "
+              f"timestamps={'on' if options.timestamps else 'off'} recursive={recursive} "
+              f"context_terms={len(context_terms)} out={out_dir}", file=sys.stderr)
 
     from .batch import run
 

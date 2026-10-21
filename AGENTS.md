@@ -47,7 +47,7 @@ media-transcribe ./media --lang zh --dry-run  # preview a run without transcribi
 2. **Engines return raw text or raw segments.** Cleaning lives in `clean.py` and formatting in `render.py`, never inside an engine.
 3. **`Engine.transcribe` / `transcribe_segments` receive a normalized 16 kHz mono WAV.** Don't re-extract in engines.
 4. **Output mirrors the input tree** (`<out>/<relpath>.<format>`); a collision pre-flight aborts on duplicate targets (exit 2).
-5. **Resumable:** a non-empty target file is skipped unless `--overwrite`.
+5. **Resumable:** a non-empty target file is skipped unless `--overwrite`; targets are written to `<name>.part` and renamed, so a partial file never counts as done.
 6. **Sequential** processing (no `--jobs`).
 7. **Exit codes:** `0` ok · `1` some files failed · `2` usage/precondition error (`--doctor`: `2` if any check fails).
 8. **Python 3.10+**, but keep modules import-safe on 3.9 (no runtime `X | Y` unions; guard `entry_points(group=…)`).

@@ -19,6 +19,12 @@ def test_speakers_numbered_by_first_appearance_in_chinese():
                    "说话人 1：先看数据。这里用 API。\n")
 
 
+@pytest.mark.parametrize("code", ["zh-Hant", "zh_CN", "zh-HK", "Chinese", "yue"])
+def test_chinese_variants_get_chinese_labels(code):
+    out = render_segments(DIALOG[:1], fmt="txt", language=code, timestamps=False)
+    assert out.startswith("说话人 1：")
+
+
 def test_english_labels_and_timestamps():
     segs = [Segment("Hi there.", 61.0, 62.0, "A"), Segment("Hello.", 62.5, 63.0, "B")]
     out = render_segments(segs, fmt="txt", language="en", timestamps=True)

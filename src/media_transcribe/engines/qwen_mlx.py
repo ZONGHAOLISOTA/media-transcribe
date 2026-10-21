@@ -33,6 +33,7 @@ _BINARY = "mlx-qwen3-asr"
 TESTED_VERSION = (0, 4, 4)
 
 DEFAULT_MODEL = "Qwen/Qwen3-ASR-0.6B"
+ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"  # mlx-qwen3-asr's default for --timestamps
 # Short names accepted by --model; anything else is passed through as a
 # Hugging Face repo id or a local path. Quantized builds need mlx-qwen3-asr >= 0.4.3.
 MODEL_ALIASES = {
@@ -193,6 +194,8 @@ class QwenMlxEngine(Engine):
             checks = [Check("ok", _BINARY, f"{shown} ({path})")]
         checks += _upstream_doctor(options.diarize)
         checks.append(_model_check(options.model))
+        checks.append(_model_check(ALIGNER_MODEL, label="timestamp model",
+                                   when="the first --timestamps / --diarize / srt run"))
         checks.append(_diarization_check(options.diarize, version))
         return checks
 
@@ -227,16 +230,22 @@ def _upstream_doctor(diarize: bool) -> list[Check]:
             continue
         current = Check(status, f"{_BINARY}: {label}", detail)
         checks.append(current)
+    for check in checks:  # upstream suggests pip; it is installed as a uv tool here
+        if "pip install" in check.detail:
+            check.detail = (check.detail.split(" — fix:")[0]
+                            + " — fix: uv tool install --reinstall mlx-qwen3-asr")
     return checks
 
 
-def _model_check(model: str | None) -> Check:
+def _model_check(model: str | None, label: str = "model", when: str = "the first run") -> Check:
     repo = resolve_model(model)
-    if Path(repo).expanduser().exists():
-        return Check("ok", "model", f"{repo} (local path)")
+    if repo.startswith(("/", "./", "../")):  # a local path, never a Hugging Face id
+        if Path(repo).exists():
+            return Check("ok", label, f"{repo} (local path)")
+        return Check("fail", label, f"{repo}: path not found — check --model")
     if hf_cache.snapshot(repo):
-        return Check("ok", "model", f"{repo} (downloaded)")
-    return Check("warn", "model", f"{repo} not downloaded yet — the first run downloads it")
+        return Check("ok", label, f"{repo} (downloaded)")
+    return Check("warn", label, f"{repo} not downloaded yet — {when} downloads it")
 
 
 def _diarization_check(requested: bool, version: tuple[int, ...] | None) -> Check:
@@ -250,17 +259,22 @@ def _diarization_check(requested: bool, version: tuple[int, ...] | None) -> Chec
     cached = hf_cache.snapshot(pipeline) is not None and pipeline == PYANNOTE_PIPELINE
     tok = hf_cache.token()
     if tok:
+        # A cached copy still loads when the token is refused (huggingface_hub falls
+        # back to the cache on 401/403), so those only warn.
         status, detail = hf_cache.check_access(pipeline, "config.yaml", tok)
         if status == "ok":
             return Check("ok", label, f"{pipeline}: token accepted")
         if status == "denied":
-            return Check(level, label, f"{pipeline}: accept the model's terms at {page}")
+            return Check("warn" if cached else level, label,
+                         f"{pipeline}: accept the model's terms at {page}")
         if status == "unauthorized":
-            hint = (" — remove it (unset the variable, or hf auth logout) to use the "
-                    "cached copy") if cached else ""
-            return Check("warn" if cached else level, label, f"{pipeline}: {detail}{hint}")
+            fix = ("remove it (unset the variable, or hf auth logout) to use the cached copy"
+                   if cached else "create a read token at "
+                   "https://huggingface.co/settings/tokens and export HF_TOKEN=<it>")
+            return Check("warn" if cached else level, label, f"{pipeline}: {detail} — {fix}")
         return Check("warn" if cached else level, label,
-                     f"{pipeline}: could not verify the token ({detail})")
+                     f"{pipeline}: could not verify the token ({detail}) — check the "
+                     "network connection and re-run --doctor")
     if cached and version and version >= (0, 4, 0):
         return Check("ok", label, f"{pipeline}: downloaded — no token needed")
     return Check(level, label, f"{pipeline} not downloaded — needed only for --diarize: "

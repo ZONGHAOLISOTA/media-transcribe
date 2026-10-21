@@ -86,6 +86,52 @@ def test_short_latin_word_does_not_latch_onto_a_longer_word():
     assert text[slice(*spans[2])].strip() == "cat"
 
 
+def test_search_catches_up_after_a_long_unmatched_stretch():
+    # 30 unmatched aligner words (>50 chars of text) must not derail every later word.
+    text = " ".join(f"zz{i:02d}" for i in range(30)) + " Then it works. Okay."
+    words = [_w(f"qq{i}", i * .2, i * .2 + .1) for i in range(30)]
+    words += [_w("Then", 7.0, 7.2, "A"), _w("it", 7.2, 7.3, "A"), _w("works", 7.3, 7.6, "A"),
+              _w("Okay", 8.0, 8.3, "B")]
+    segs = build_segments(text, words)
+    assert segs[-1].text == "Okay." and segs[-1].speaker == "B"
+    assert "".join(s.text for s in segs).replace(" ", "") == text.replace(" ", "")
+
+
+def test_curly_apostrophe_matches_the_aligner_token():
+    text = "It’s fine."
+    spans = locate(text, [_w("Its", 0, .2), _w("fine", .2, .5)])
+    assert text[slice(*spans[0])] == "It’s"
+
+
+def test_long_sentence_splits_at_a_comma():
+    clauses = ["我们先把数据准备好，", "然后跑一遍基线模型，", "最后再看看结果怎么样。"]
+    text = "".join(clauses)
+    chars = [c for c in text if c.isalnum()]
+    words = [_w(c, i * 0.4, i * 0.4 + 0.3) for i, c in enumerate(chars)]   # ~11 s sentence
+    segs = build_segments(text, words)
+    assert len(segs) >= 2 and "".join(s.text for s in segs) == text
+    assert all(s.text[-1] in "，。" for s in segs)                         # cut at clause marks
+    assert all(s.end - s.start < 12 for s in segs)
+
+
+def test_unpunctuated_run_is_cut_at_twice_the_limit():
+    text = "这是一个完全没有标点的很长很长很长很长很长很长很长很长很长很长很长的句子"
+    words = [_w(c, i * 0.5, i * 0.5 + 0.4) for i, c in enumerate(text)]
+    segs = build_segments(text, words)
+    assert len(segs) >= 2 and "".join(s.text for s in segs) == text
+
+
+@pytest.mark.parametrize("text,count", [
+    ("Ask Dr. Smith today.", 1),
+    ("Use a tool, e.g. the profiler.", 1),
+    ("Version 3.5 shipped. Then 4.0 came.", 2),
+])
+def test_abbreviations_and_numbers_do_not_end_sentences(text, count):
+    tokens = [t.strip(".,").replace(".", "") for t in text.split()]
+    words = [_w(t, i * .3, i * .3 + .25) for i, t in enumerate(tokens)]
+    assert len(build_segments(text, words)) == count
+
+
 def test_decimal_point_is_not_a_sentence_end():
     text = "It costs 3.5 dollars."
     words = [_w("It", 0, 0.2), _w("costs", 0.2, 0.5), _w("3", 0.5, 0.6),

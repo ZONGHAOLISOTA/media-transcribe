@@ -44,6 +44,9 @@ class MyEngine(Engine):
     name = "my-engine"
     features = frozenset({"model", "timestamps", "diarize"})
 
+    def is_available(self) -> tuple[bool, str]:
+        ...
+
     def transcribe(self, wav, *, language, context, options: Options | None = None) -> str:
         ...
 

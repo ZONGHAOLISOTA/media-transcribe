@@ -122,7 +122,7 @@ def run(
     for i, it in enumerate(items, 1):
         prefix = f"[{i}/{total}] {it.rel}"
         if it.target.exists() and it.target.stat().st_size > 0 and not overwrite:
-            log(f"{prefix}  skip (exists)")
+            log(f"{prefix}  skip (exists; --overwrite to redo)")
             results.append(Result(str(it.src), str(it.target), "skipped"))
             continue
         if dry_run:
@@ -136,7 +136,11 @@ def run(
                 options=options, fmt=fmt,
             )
             it.target.parent.mkdir(parents=True, exist_ok=True)
-            it.target.write_text(text, encoding="utf-8")
+            # Write then rename, so an interrupted run never leaves a partial file
+            # that the resume check would mistake for a finished transcript.
+            part = it.target.with_name(it.target.name + ".part")
+            part.write_text(text, encoding="utf-8")
+            part.replace(it.target)
             results.append(Result(str(it.src), str(it.target), "done"))
         except Exception as e:  # noqa: BLE001 - record and continue the batch
             failures += 1

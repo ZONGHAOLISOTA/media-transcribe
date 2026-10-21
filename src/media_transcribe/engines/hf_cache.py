@@ -51,21 +51,34 @@ def snapshot(repo_id: str) -> Path | None:
     return snaps[-1] if snaps else None
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Don't follow redirects: the token must not travel to another host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def check_access(repo_id: str, filename: str, tok: str, timeout: float = 10.0) -> tuple[str, str]:
     """Can ``tok`` download ``filename`` from ``repo_id``?
 
     Returns ``("ok" | "unauthorized" | "denied" | "error", detail)``; ``denied``
-    on a gated repo means the model's terms have not been accepted yet. The
-    detail never contains the token.
+    on a gated repo means the model's terms have not been accepted yet. A
+    redirect (to the file's storage) also means access was granted. The detail
+    never contains the token.
     """
     if not tok.isprintable() or any(ch.isspace() for ch in tok):
         return "unauthorized", "token contains spaces or control characters"
     url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
     req = urllib.request.Request(url, method="HEAD", headers={"Authorization": f"Bearer {tok}"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout):
+        with _OPENER.open(req, timeout=timeout):
             return "ok", ""
     except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            return "ok", ""
         if e.code == 401:
             return "unauthorized", "token rejected (invalid or revoked)"
         if e.code == 403:

@@ -27,6 +27,10 @@ def collect(engine_name: str, options: Options) -> list[Check]:
         engine = get_engine(engine_name)
     except KeyError as e:
         return checks + [Check("fail", "engine", str(e).strip("'\""))]
+    missing = options.requested_features() - set(getattr(engine, "features", ()))
+    if missing:
+        checks.append(Check("fail", f"engine {engine_name}",
+                            f"does not support: {', '.join(sorted(missing))}"))
     try:
         checks += engine.doctor(options)
     except Exception as e:  # noqa: BLE001 - a broken engine check must not hide the others

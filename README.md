@@ -71,7 +71,7 @@ directory, not the input folder.
 | `--lang LANG` | spoken language (`zh`, `en`, `ja`, `ko`, …); Chinese mixed with English → `zh` | `zh` |
 | `--model MODEL` | `0.6b`, `1.7b` (more accurate, ~2× slower), `0.6b-8bit`, `1.7b-8bit`, `0.6b-4bit`, `1.7b-4bit`, or a Hugging Face id / local path | `0.6b` |
 | `--context "TERMS"` / `--context-file FILE` | names and jargon to bias recognition (merged, de-duplicated) | none |
-| `--diarize` | label speakers: `说话人 1：…` for Chinese, `Speaker 1: …` otherwise | off |
+| `--diarize` / `--no-diarize` | label speakers: `说话人 1：…` for Chinese, `Speaker 1: …` otherwise | off |
 | `--num-speakers N` | exact speaker count — only if you are sure; a wrong count hurts | detected |
 | `--min-speakers N` / `--max-speakers N` | bounds for detection | engine's (1–8) |
 | `--timestamps` | start each line with `[hh:mm:ss]` | off |
@@ -82,6 +82,9 @@ directory, not the input folder.
 
 The output file takes the format's extension (`ep1.txt`, `ep1.srt`, …). Changing
 `--diarize` or `--timestamps` for a file that already has a `.txt` needs `--overwrite`.
+Yes/no options also have a `--no-…` form (`--no-diarize`) to switch off a config default.
+Timed lines and subtitle cues are split at a comma or similar once a sentence passes
+~6 s or ~42 characters' width.
 
 ## Speaker labels (`--diarize`)
 

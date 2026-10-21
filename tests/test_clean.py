@@ -40,6 +40,29 @@ def test_keeps_real_content_with_filler_char_inside():
     assert "我们开始吧" in out
 
 
+def test_english_transcript_mentioning_context_terms_is_kept():
+    # Regression: the whole English text is one "sentence" here and used to be wiped.
+    ctx = ["Kubernetes", "Docker", "Helm"]
+    text = "Today we compare Kubernetes and Docker and Helm for small teams. That is the plan."
+    assert clean(text, ctx).strip() == text
+
+
+def test_real_last_sentence_naming_terms_is_kept():
+    ctx = ["Kubernetes", "Docker", "Helm"]
+    out = clean("正文。今天对比 Kubernetes 和 Docker 还有 Helm 三个工具。", ctx)
+    assert "三个工具" in out
+
+
+def test_english_context_echo_is_still_stripped():
+    out = clean("正文。Kubernetes, Docker, Helm.", ["Kubernetes", "Docker", "Helm"])
+    assert out == "正文。\n"
+
+
+def test_segments_keep_english_repeats_like_plain_clean():
+    segs = [Segment("Okay.", 0, 1, "A"), Segment("Okay.", 1, 2, "A")]
+    assert [s.text for s in clean_segments(segs)] == ["Okay.", "Okay."]
+
+
 def test_segments_merge_consecutive_duplicates_of_one_speaker():
     segs = [Segment("你好。", 0, 1, "A"), Segment("你好。", 1, 2, "A"), Segment("你好。", 2, 3, "B")]
     out = clean_segments(segs)

@@ -117,6 +117,18 @@ def test_options_reach_transcribe_only_when_requested(tmp_path, monkeypatch):
     assert eng.seen_options[-1].model == "1.7b"
 
 
+def test_skip_hints_overwrite_and_no_part_file_is_left(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    _run(tmp_path, _FakeEngine())
+    assert [p.name for p in (tmp_path / "out").iterdir() if p.is_file()] == ["ep1.txt"]
+    logs = []
+    batch.run(tmp_path, engine=_FakeEngine(), out_dir=tmp_path / "out", language="zh",
+              context_terms=[], recursive=False, overwrite=False, dry_run=False,
+              log=logs.append)
+    assert any("--overwrite" in line for line in logs)
+
+
 def test_dry_run_does_not_write(tmp_path, monkeypatch):
     _touch(tmp_path / "ep1.mp4")
     monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
