@@ -10,11 +10,17 @@ Two ASR failure modes are handled:
 Both manifest as duplicate / context-leaking sentences at the tail. We:
   - collapse runs of consecutive identical sentences, then
   - drop trailing sentences that are context-string echoes or empty.
+
+``clean_segments`` applies the same rules to timed segments (one segment is
+roughly one sentence).
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import replace
+
+from .datatypes import Segment
 
 _SENT_END = "。！？\n"
 _SPLIT_RE = re.compile(r"(。|！|？|\n)")
@@ -44,6 +50,16 @@ def _key(sentence: str) -> str:
     return sentence.rstrip(_SENT_END + " ")
 
 
+def _is_junk_tail(sentence: str, ctx: set[str]) -> bool:
+    """True if a tail sentence is empty, a context-vocabulary echo, or pure filler."""
+    tail = sentence.strip().rstrip(_SENT_END)
+    if not tail:
+        return True
+    if ctx and len(set(tail.split()) & ctx) >= 3:
+        return True
+    return all(ch in _FILLER for ch in tail)
+
+
 def clean(text: str, context_terms: list[str] | None = None) -> str:
     """Return a cleaned transcript.
 
@@ -62,20 +78,30 @@ def clean(text: str, context_terms: list[str] | None = None) -> str:
 
     # 2. Strip tail sentences that are empty, context-vocabulary echoes, or filler.
     ctx = set(context_terms or [])
-    while deduped:
-        tail = deduped[-1].strip().rstrip(_SENT_END)
-        if not tail:
-            deduped.pop()
-            continue
-        if ctx and len(set(tail.split()) & ctx) >= 3:
-            deduped.pop()
-            continue
-        if all(ch in _FILLER for ch in tail):
-            deduped.pop()
-            continue
-        break
+    while deduped and _is_junk_tail(deduped[-1], ctx):
+        deduped.pop()
 
     result = "".join(deduped)
     if result and not result.endswith("\n"):
         result += "\n"
     return result
+
+
+def clean_segments(
+    segments: list[Segment], context_terms: list[str] | None = None
+) -> list[Segment]:
+    """Segment-level ``clean``: merge consecutive duplicates, strip a junk tail."""
+    out: list[Segment] = []
+    for seg in segments:
+        if not seg.text.strip():
+            continue
+        prev = out[-1] if out else None
+        if prev and prev.speaker == seg.speaker and _key(prev.text) == _key(seg.text):
+            out[-1] = replace(prev, end=max(prev.end, seg.end))
+            continue
+        out.append(seg)
+
+    ctx = set(context_terms or [])
+    while out and _is_junk_tail(out[-1].text, ctx):
+        out.pop()
+    return out

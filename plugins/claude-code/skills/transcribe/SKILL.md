@@ -1,12 +1,12 @@
 ---
-description: Transcribe video or audio to text. Use when the user wants to turn media (a single file or a folder of videos/audio) into transcripts or notes from recordings. Drives the standalone `media-transcribe` CLI.
+description: Transcribe video or audio to text. Use when the user wants to turn media (a single file or a folder of videos/audio) into transcripts or notes from recordings — including interviews or meetings with speaker labels, timestamps, or subtitles. Drives the standalone `media-transcribe` CLI.
 ---
 
 # Transcribe media to text
 
 You are a **thin adapter** over the `media-transcribe` CLI. Do NOT implement audio
-extraction, ASR, or text cleaning yourself — the CLI does all of that. Your job is to
-recognize intent, check prerequisites, call the CLI, and summarize.
+extraction, ASR, speaker labelling, or text cleaning yourself — the CLI does all of that.
+Your job is to recognize intent, check prerequisites, call the CLI, and summarize.
 
 ## Steps
 
@@ -14,23 +14,32 @@ recognize intent, check prerequisites, call the CLI, and summarize.
    ambiguous, ask before running anything.
 2. **Check prerequisites** (actually run these; don't assume):
    - `command -v media-transcribe` — if missing, tell the user to install it:
-     `pipx install git+https://github.com/ZONGHAOLISOTA/media-transcribe`
-   - `command -v ffmpeg` — if missing: `brew install ffmpeg`.
-   - The selected engine: a `--dry-run` warns (without failing) if it is unavailable.
-     For the default `qwen-mlx` engine, point to `docs/INSTALL_QWEN.md`.
-3. **Call the CLI** — preview with a dry run first, then the real run:
+     `uv tool install git+https://github.com/ZONGHAOLISOTA/media-transcribe`
+   - `media-transcribe --doctor` (add `--diarize` if you will use it) — it checks ffmpeg,
+     the engine, the model and the speaker-label setup, and prints the fix for each
+     `[FAIL]`. Relay those fixes; don't improvise your own.
+3. **Pick options** — run `media-transcribe --help` for the current list. Typical choices:
+   - one speaker (lecture, talk, video): defaults;
+   - interview or meeting: `--diarize` (add `--timestamps` if they want times);
+   - `--num-speakers N` **only** when the user states the count — a wrong count merges
+     people; otherwise let it be detected;
+   - subtitles: `--format srt`; names / jargon: `--context "<terms>"` or `--context-file`;
+   - language: default `zh` also covers Chinese mixed with English; `--lang en` for English.
+4. **Call the CLI** — preview with a dry run first, then the real run:
    ```bash
-   media-transcribe "<path>" --lang <zh|en|...> [--recursive] [--context-file vocab.txt]
+   media-transcribe "<path>" [options] --dry-run
+   media-transcribe "<path>" [options]
    ```
-   - Default language is `zh`; confirm if unclear.
-   - Add `--recursive` only if the user wants subfolders included.
-   - Pass `--context-file <file>` or `--context "<terms>"` when the user has domain
-     vocabulary (improves accuracy on names/jargon).
-4. **Summarize**: how many done / skipped / failed, and where the transcripts landed
+   Add `--recursive` only if the user wants subfolders included.
+5. **Summarize**: how many done / skipped / failed, and where the transcripts landed
    (`<input>/transcripts/`, or `--out`). On any failure, point to
    `transcripts/.media-transcribe/run.json`.
 
 ## Don't
 
-- Don't re-extract audio or call an ASR model directly — always go through the CLI.
-- Don't overwrite existing transcripts unless the user asks (`--overwrite`).
+- Don't re-extract audio, call an ASR or diarization model directly, or relabel speakers
+  yourself — always go through the CLI.
+- Don't overwrite existing transcripts unless the user asks (`--overwrite`); note that a
+  file already transcribed without `--diarize` is skipped until then.
+- Don't ask the user to paste access tokens into the chat; point them to the setup line
+  that `--doctor` prints.

@@ -8,16 +8,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
-from . import media
-from .clean import clean
-from .engines.base import Engine
+from . import media, render
+from .clean import clean, clean_segments
+from .engines.base import Engine, Options
 
 
 @dataclass
 class Item:
     src: Path     # input media file
     rel: Path     # path relative to the scan base (for tree mirroring)
-    target: Path  # output .txt path
+    target: Path  # output path (.txt, or the --format extension)
 
 
 @dataclass
@@ -35,8 +35,8 @@ def discover(root: Path, *, recursive: bool) -> list[Path]:
     return sorted(p for p in globber if p.is_file() and media.is_media(p))
 
 
-def plan(root: Path, files: list[Path], out_dir: Path) -> list[Item]:
-    """Map each input to ``<out>/<relpath>.txt``, mirroring the input tree."""
+def plan(root: Path, files: list[Path], out_dir: Path, suffix: str = ".txt") -> list[Item]:
+    """Map each input to ``<out>/<relpath><suffix>``, mirroring the input tree."""
     base = root.parent if root.is_file() else root
     items: list[Item] = []
     for f in files:
@@ -44,7 +44,7 @@ def plan(root: Path, files: list[Path], out_dir: Path) -> list[Item]:
             rel = f.relative_to(base)
         except ValueError:
             rel = Path(f.name)
-        target = (out_dir / rel).with_suffix(".txt")
+        target = (out_dir / rel).with_suffix(suffix)
         items.append(Item(src=f, rel=rel, target=target))
     return items
 
@@ -58,13 +58,25 @@ def find_collisions(items: list[Item]) -> dict[Path, list[Path]]:
 
 
 def _process_one(
-    it: Item, *, engine: Engine, language: str, context_terms: list[str]
+    it: Item, *, engine: Engine, language: str, context_terms: list[str],
+    options: Options, fmt: str,
 ) -> str:
     with tempfile.TemporaryDirectory(prefix="media-transcribe-") as td:
         wav = Path(td) / (it.src.stem + ".wav")
         media.extract_wav(it.src, wav)
-        raw = engine.transcribe(wav, language=language, context=context_terms)
-    return clean(raw, context_terms)
+        if render.needs_segments(options, fmt):
+            segments = engine.transcribe_segments(
+                wav, language=language, context=context_terms, options=options
+            )
+            return render.render_segments(
+                clean_segments(segments, context_terms),
+                fmt=fmt, language=language, timestamps=options.timestamps,
+            )
+        # Only pass ``options`` when one was requested, so engines written for
+        # v0.1 (no ``options`` parameter) keep working.
+        extra = {"options": options} if options.requested_features() else {}
+        raw = engine.transcribe(wav, language=language, context=context_terms, **extra)
+    return render.render_text(clean(raw, context_terms), fmt=fmt, language=language)
 
 
 def _write_manifest(out_dir: Path, results: list[Result]) -> None:
@@ -87,10 +99,13 @@ def run(
     overwrite: bool,
     dry_run: bool,
     log: Callable[[str], None] = print,
+    options: Options | None = None,
+    fmt: str = "txt",
 ) -> tuple[list[Result], int]:
     """Process ``root``. Returns (results, exit_code)."""
+    options = options or Options()
     files = discover(root, recursive=recursive)
-    items = plan(root, files, out_dir)
+    items = plan(root, files, out_dir, suffix=f".{fmt}")
 
     collisions = find_collisions(items)
     if collisions:
@@ -117,7 +132,8 @@ def run(
         try:
             log(f"{prefix}  transcribing...")
             text = _process_one(
-                it, engine=engine, language=language, context_terms=context_terms
+                it, engine=engine, language=language, context_terms=context_terms,
+                options=options, fmt=fmt,
             )
             it.target.parent.mkdir(parents=True, exist_ok=True)
             it.target.write_text(text, encoding="utf-8")

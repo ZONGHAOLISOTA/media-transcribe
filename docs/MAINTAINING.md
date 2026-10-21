@@ -42,6 +42,17 @@ What "good" looks like:
 
 Failures, if any, are recorded in `<out>/.media-transcribe/run.json`.
 
+To verify speaker labels (after the one-time setup that `media-transcribe --doctor`
+walks you through):
+
+```bash
+media-transcribe "/path/to/a/short/conversation.m4a" --diarize --timestamps --out /tmp/check
+cat /tmp/check/*.txt
+```
+
+"Good" here: every word of the plain transcript is present, turns alternate where the
+speakers do, and errors are limited to turn edges and very short replies.
+
 ## Test the Claude Code plugin
 
 ```bash
@@ -81,5 +92,7 @@ This project is built collaboratively with AI. The most useful feedback is concr
 
 ## Roadmap
 
-- **v0.2.0** — a cross-platform fallback engine (e.g. faster-whisper) so users who aren't
+- **v0.2.0** — model choice (`--model`), speaker labels (`--diarize`), timestamps,
+  subtitle/JSON/TSV output, `--doctor`, grouped `--help` with examples.
+- **Next** — a cross-platform fallback engine (e.g. faster-whisper) so users who aren't
   on Apple Silicon work out of the box.

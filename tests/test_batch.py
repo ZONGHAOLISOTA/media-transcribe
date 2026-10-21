@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from media_transcribe import batch
-from media_transcribe.engines.base import Engine
+from media_transcribe.engines.base import Engine, Options, Segment
 
 
 class _FakeEngine(Engine):
@@ -13,6 +13,25 @@ class _FakeEngine(Engine):
 
     def transcribe(self, wav, *, language, context):
         return "hello。hello。world。"
+
+
+class _FeatureEngine(Engine):
+    name = "fake-features"
+    features = frozenset({"model", "timestamps", "diarize"})
+
+    def __init__(self):
+        self.seen_options = []
+
+    def is_available(self):
+        return True, ""
+
+    def transcribe(self, wav, *, language, context, options=None):
+        self.seen_options.append(options)
+        return "plain。"
+
+    def transcribe_segments(self, wav, *, language, context, options):
+        return [Segment("我们开始吧。", 0.0, 1.0, "S0"), Segment("好。", 1.2, 1.5, "S1"),
+                Segment("好。", 1.5, 1.8, "S1")]
 
 
 def _touch(p: Path):
@@ -61,6 +80,41 @@ def test_run_writes_transcript_then_skips(tmp_path, monkeypatch):
         log=lambda m: None,
     )
     assert results2[0].status == "skipped"
+
+
+def _run(tmp_path, engine, overwrite=False, **kw):
+    return batch.run(
+        tmp_path, engine=engine, out_dir=tmp_path / "out", language="zh",
+        context_terms=[], recursive=False, overwrite=overwrite, dry_run=False,
+        log=lambda m: None, **kw,
+    )
+
+
+def test_diarized_run_writes_speaker_labels(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    results, code = _run(tmp_path, _FeatureEngine(), options=Options(diarize=True))
+    assert code == 0
+    text = (tmp_path / "out" / "ep1.txt").read_text(encoding="utf-8")
+    assert text == "说话人 1：我们开始吧。\n\n说话人 2：好。\n"   # duplicate "好。" collapsed
+
+
+def test_format_sets_extension(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    _run(tmp_path, _FeatureEngine(), fmt="srt")
+    assert (tmp_path / "out" / "ep1.srt").read_text(encoding="utf-8").startswith("1\n00:00:00,000")
+
+
+def test_options_reach_transcribe_only_when_requested(tmp_path, monkeypatch):
+    _touch(tmp_path / "a.mp4")
+    _touch(tmp_path / "b.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    eng = _FeatureEngine()
+    _run(tmp_path, eng)                                    # nothing requested
+    _run(tmp_path, eng, options=Options(model="1.7b"), overwrite=True)
+    assert eng.seen_options[0] is None
+    assert eng.seen_options[-1].model == "1.7b"
 
 
 def test_dry_run_does_not_write(tmp_path, monkeypatch):

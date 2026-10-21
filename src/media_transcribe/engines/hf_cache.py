@@ -1,0 +1,77 @@
+"""Hugging Face cache and token helpers (stdlib only) for engines that use HF models."""
+
+from __future__ import annotations
+
+import os
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# Where a token can come from, in lookup order: the variables mlx-qwen3-asr reads
+# for pyannote, the older huggingface_hub name, then the file `hf auth login` writes.
+TOKEN_VARS = ("PYANNOTE_AUTH_TOKEN", "HUGGINGFACE_TOKEN", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+
+
+def _hf_home() -> Path:
+    if os.environ.get("HF_HOME"):
+        return Path(os.environ["HF_HOME"]).expanduser()
+    base = os.environ.get("XDG_CACHE_HOME") or "~/.cache"
+    return Path(base).expanduser() / "huggingface"
+
+
+def token() -> str:
+    for var in TOKEN_VARS:
+        value = os.environ.get(var, "").strip()
+        if value:
+            return value
+    path = Path(os.environ.get("HF_TOKEN_PATH") or _hf_home() / "token").expanduser()
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def cache_dir() -> Path:
+    """The hub cache directory, following huggingface_hub's environment variables."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
+    return _hf_home() / "hub"
+
+
+def snapshot(repo_id: str) -> Path | None:
+    """Local snapshot directory of a cached model repo (its ``main`` ref), or None."""
+    repo = cache_dir() / ("models--" + repo_id.replace("/", "--"))
+    ref = repo / "refs" / "main"
+    if ref.is_file():
+        snap = repo / "snapshots" / ref.read_text(encoding="utf-8").strip()
+        if snap.is_dir():
+            return snap
+    snaps = sorted((repo / "snapshots").glob("*"), key=lambda p: p.stat().st_mtime) \
+        if (repo / "snapshots").is_dir() else []
+    return snaps[-1] if snaps else None
+
+
+def check_access(repo_id: str, filename: str, tok: str, timeout: float = 10.0) -> tuple[str, str]:
+    """Can ``tok`` download ``filename`` from ``repo_id``?
+
+    Returns ``("ok" | "unauthorized" | "denied" | "error", detail)``; ``denied``
+    on a gated repo means the model's terms have not been accepted yet. The
+    detail never contains the token.
+    """
+    if not tok.isprintable() or any(ch.isspace() for ch in tok):
+        return "unauthorized", "token contains spaces or control characters"
+    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    req = urllib.request.Request(url, method="HEAD", headers={"Authorization": f"Bearer {tok}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            return "ok", ""
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return "unauthorized", "token rejected (invalid or revoked)"
+        if e.code == 403:
+            return "denied", "terms not accepted for this token's account"
+        return "error", f"HTTP {e.code}"
+    except urllib.error.URLError as e:
+        return "error", str(e.reason)
+    except Exception as e:  # noqa: BLE001 - never let a message carry the token
+        return "error", type(e).__name__
