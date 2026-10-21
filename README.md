@@ -102,8 +102,9 @@ speaks merges that person into someone else).
 
 One-time setup — `media-transcribe --doctor` checks each step:
 
-1. `uv tool install --upgrade "mlx-qwen3-asr[diarize]"` (adds pyannote + PyTorch; use
-   `[diarize,aligner]` for Japanese / Korean).
+1. `uv tool install --reinstall --python 3.12 "mlx-qwen3-asr[diarize]"` (adds pyannote +
+   PyTorch; use `[diarize,aligner]` for Japanese / Korean; Python 3.12 avoids an old SciPy
+   build that recent macOS refuses to load).
 2. Accept the terms of
    [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
    on Hugging Face and create a read token.

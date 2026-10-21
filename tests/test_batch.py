@@ -129,6 +129,53 @@ def test_skip_hints_overwrite_and_no_part_file_is_left(tmp_path, monkeypatch):
     assert any("--overwrite" in line for line in logs)
 
 
+def test_case_only_difference_is_a_collision(tmp_path):
+    # macOS file systems ignore case: Talk.txt and talk.txt are one file.
+    _touch(tmp_path / "Talk.mp4")
+    _touch(tmp_path / "talk.m4a")
+    items = batch.plan(tmp_path, batch.discover(tmp_path, recursive=False), tmp_path / "out")
+    assert len(batch.find_collisions(items)) == 1
+
+
+def test_long_file_name_is_written(tmp_path, monkeypatch):
+    stem = "x" * 247                        # target "<stem>.txt" is 251 characters
+    _touch(tmp_path / f"{stem}.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    results, code = _run(tmp_path, _FakeEngine())
+    assert code == 0 and (tmp_path / "out" / f"{stem}.txt").exists()
+    assert not [p for p in (tmp_path / "out").iterdir() if p.name.endswith(".part")]
+
+
+class _LeakyEngine(_FakeEngine):
+    name = "fake-leaky"
+
+    def transcribe(self, wav, *, language, context):
+        raise RuntimeError("GatedRepoError for Bearer hf_SECRETSECRETSECRET")
+
+
+def test_failure_reason_never_stores_a_token(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    logs = []
+    batch.run(tmp_path, engine=_LeakyEngine(), out_dir=tmp_path / "out", language="zh",
+              context_terms=[], recursive=False, overwrite=False, dry_run=False,
+              log=logs.append)
+    manifest = (tmp_path / "out" / ".media-transcribe" / "run.json").read_text(encoding="utf-8")
+    assert "SECRET" not in manifest and "hf_***" in manifest
+    assert not any("SECRET" in line for line in logs)
+
+
+def test_unwritable_manifest_is_reported_not_raised(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+
+    def refuse(out_dir, results):
+        raise OSError("read-only file system")
+    monkeypatch.setattr(batch, "_write_manifest", refuse)
+    results, code = _run(tmp_path, _FakeEngine())
+    assert code == 1 and results[0].status == "done"
+
+
 def test_dry_run_does_not_write(tmp_path, monkeypatch):
     _touch(tmp_path / "ep1.mp4")
     monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)

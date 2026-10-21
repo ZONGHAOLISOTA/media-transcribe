@@ -86,6 +86,47 @@ def test_short_latin_word_does_not_latch_onto_a_longer_word():
     assert text[slice(*spans[2])].strip() == "cat"
 
 
+def test_reply_between_pauses_survives_without_punctuation():
+    # Unpunctuated output (e.g. Russian): a short reply set off by pauses keeps its speaker.
+    text = "ты ходил вчера на рынок да и что вы там купили"
+    words = [_w(t, i * 0.4, i * 0.4 + 0.35, "A")
+             for i, t in enumerate(["ты", "ходил", "вчера", "на", "рынок"])]
+    words += [_w("да", 3.05, 3.45, "B")]                                  # 1.1 s pauses around
+    words += [_w(t, 4.55 + i * 0.4, 4.9 + i * 0.4, "A")
+              for i, t in enumerate(["и", "что", "вы", "там", "купили"])]
+    segs = build_segments(text, words)
+    assert [(s.speaker, s.text) for s in segs] == [
+        ("A", "ты ходил вчера на рынок"), ("B", "да"), ("A", "и что вы там купили")]
+
+
+def test_arabic_question_mark_ends_a_sentence():
+    text = "كيف حالك؟ بخير"
+    words = [_w("كيف", 0, .4, "A"), _w("حالك", .4, .9, "A"), _w("بخير", 1.0, 1.3, "B")]
+    assert [s.speaker for s in build_segments(text, words)] == ["A", "B"]
+
+
+def test_quote_tokens_do_not_shift_later_cjk_words():
+    # The aligner can emit an ASCII quote as its own token next to CJK text.
+    text = "他说'你好'，我也说你好。然后我们走吧。"
+    first = list("他说") + ["'"] + list("你好") + ["'"] + list("我也说你好")
+    words = [_w(t, i * 0.25, i * 0.25 + 0.2, "A") for i, t in enumerate(first)]
+    words += [_w(t, 4.35 + i * 0.25, 4.55 + i * 0.25, "B") for i, t in enumerate("然后我们走吧")]
+    segs = build_segments(text, words)
+    assert [(s.speaker, s.text) for s in segs] == [("A", "他说'你好'，我也说你好。"),
+                                                   ("B", "然后我们走吧。")]
+    assert segs[1].start == pytest.approx(4.35)
+
+
+def test_latin_word_glued_to_the_previous_one_matches_in_place():
+    # Chunks joined without a space; a later "then" must not attract the glued one.
+    text = "我们说OKthen继续，then 结束。"
+    words = [_w(c, 0, .1) for c in "我们说"] + [_w("OK", .1, .2), _w("then", .2, .3)]
+    words += [_w(c, .3, .4) for c in "继续"] + [_w("then", .5, .6)]
+    words += [_w(c, .6, .7) for c in "结束"]
+    spans = locate(text, words)
+    assert [text[slice(*spans[k])].strip() for k in (4, 5, 6, 7)] == ["then", "继", "续，", "then"]
+
+
 def test_search_catches_up_after_a_long_unmatched_stretch():
     # 30 unmatched aligner words (>50 chars of text) must not derail every later word.
     text = " ".join(f"zz{i:02d}" for i in range(30)) + " Then it works. Okay."

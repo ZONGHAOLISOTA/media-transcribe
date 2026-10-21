@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -194,7 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     engine_name = args.engine or cfg["engine"]
+    language = args.language or cfg["language"] or "zh"   # `language: null` -> default
     try:
+        for name, value in (("engine", engine_name), ("language", language)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be text, got {value!r}")
         options, fmt = _build_options(args, cfg)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -203,9 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.doctor:
         from .doctor import run as run_doctor
 
-        return run_doctor(engine_name, options)
+        return run_doctor(engine_name, options, language=language, fmt=fmt)
 
-    language = str(args.language or cfg["language"])
     context_file = args.context_file or cfg.get("context_file")
     context_inline = args.context if args.context is not None else cfg.get("context")
     try:
@@ -262,6 +266,16 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeDecodeError) as e:
         print(f"error: cannot read context file {context_file}: {e}", file=sys.stderr)
         return 2
+
+    if not args.dry_run:
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"error: cannot create output folder {out_dir}: {e}", file=sys.stderr)
+            return 2
+        if not os.access(out_dir, os.W_OK):
+            print(f"error: output folder is not writable: {out_dir}", file=sys.stderr)
+            return 2
 
     if args.verbose:
         counts = {k: getattr(options, k) for k in ("num_speakers", "min_speakers", "max_speakers")}

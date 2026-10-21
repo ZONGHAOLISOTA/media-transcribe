@@ -11,12 +11,14 @@ Both manifest as duplicate / context-leaking sentences at the tail. We:
   - collapse runs of consecutive identical sentences, then
   - drop trailing sentences that are context-string echoes or empty.
 
-A context echo is a tail sentence made *mostly* of context terms; a real sentence
-that merely mentions a few of them is kept. Sentences are split on CJK enders only,
-so a whole English transcript is one "sentence" here and must never qualify.
+A context echo is the model reciting its prompt: a tail sentence made of nothing
+but context terms — at least three distinct ones — in the order they were given.
+A real sentence that merely names terms ("We use Kubernetes, Docker and Helm.")
+always has some other word and is kept. Sentences are split on CJK enders only,
+so a whole English transcript is one "sentence" here.
 
-``clean_segments`` applies the same rules to timed segments (one segment is
-roughly one sentence).
+``clean_segments`` applies the same rules to timed segments, judging the tail a
+whole sentence at a time (a sentence may span several segments).
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import string
 from dataclasses import replace
 
 from .datatypes import Segment
+from .segments import TERMINATORS
 
 _SENT_END = "。！？\n"
 _SPLIT_RE = re.compile(r"(。|！|？|\n)")
@@ -56,20 +59,36 @@ def _key(sentence: str) -> str:
     return sentence.rstrip(_SENT_END + " ")
 
 
-def _is_context_echo(sentence: str, ctx: set[str]) -> bool:
-    """At least three context terms, making up at least half of the sentence's words."""
-    tokens = [t.strip(_TOKEN_STRIP) for t in sentence.split()]
-    tokens = [t for t in tokens if t]
-    hits = sum(1 for t in tokens if t in ctx)
-    return hits >= 3 and 2 * hits >= len(tokens)
+def _words(text: str) -> list[str]:
+    """Whitespace words with surrounding punctuation stripped; repeats in a row merged."""
+    out: list[str] = []
+    for raw in text.split():
+        word = raw.strip(_TOKEN_STRIP)
+        if word and (not out or out[-1] != word):
+            out.append(word)
+    return out
 
 
-def _is_junk_tail(sentence: str, ctx: set[str]) -> bool:
-    """True if a tail sentence is empty, a context-vocabulary echo, or pure filler."""
+def _is_context_echo(sentence: str, terms: list[str]) -> bool:
+    """Nothing but >= 3 distinct context terms, following the context's order (cyclically)."""
+    words = _words(sentence)
+    if len(set(words)) < 3:
+        return False
+    order: dict[str, int] = {}
+    for term in terms:
+        order.setdefault(term, len(order))
+    if any(w not in order for w in words):
+        return False
+    steps = [order[w] for w in words]
+    return all(b == (a + 1) % len(order) for a, b in zip(steps, steps[1:]))
+
+
+def _is_junk_tail(sentence: str, terms: list[str]) -> bool:
+    """True if a tail sentence is empty, a context-prompt echo, or pure filler."""
     tail = sentence.strip().rstrip(_SENT_END)
     if not tail:
         return True
-    if ctx and _is_context_echo(tail, ctx):
+    if terms and _is_context_echo(tail, terms):
         return True
     return all(ch in _FILLER for ch in tail)
 
@@ -90,15 +109,20 @@ def clean(text: str, context_terms: list[str] | None = None) -> str:
             continue
         deduped.append(s)
 
-    # 2. Strip tail sentences that are empty, context-vocabulary echoes, or filler.
-    ctx = set(context_terms or [])
-    while deduped and _is_junk_tail(deduped[-1], ctx):
+    # 2. Strip tail sentences that are empty, context-prompt echoes, or filler.
+    terms = _words(" ".join(context_terms or []))
+    while deduped and _is_junk_tail(deduped[-1], terms):
         deduped.pop()
 
     result = "".join(deduped)
     if result and not result.endswith("\n"):
         result += "\n"
     return result
+
+
+def _ends_sentence(text: str) -> bool:
+    tail = text.rstrip().rstrip("\"'”’」』）)】》〉]")
+    return bool(tail) and tail[-1] in TERMINATORS
 
 
 def clean_segments(
@@ -120,7 +144,14 @@ def clean_segments(
             continue
         out.append(seg)
 
-    ctx = set(context_terms or [])
-    while out and _is_junk_tail(out[-1].text, ctx):
-        out.pop()
+    # Judge the tail a sentence at a time: a sentence split at a clause mark or a
+    # speaker change spans several segments.
+    terms = _words(" ".join(context_terms or []))
+    while out:
+        start = len(out) - 1
+        while start > 0 and not _ends_sentence(out[start - 1].text):
+            start -= 1
+        if not _is_junk_tail(" ".join(s.text for s in out[start:]), terms):
+            break
+        del out[start:]
     return out

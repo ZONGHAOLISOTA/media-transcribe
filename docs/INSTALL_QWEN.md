@@ -16,15 +16,21 @@ Qwen3-ASR running on Apple Silicon via Apple's MLX framework.
 ## 2. Install the engine
 
 ```bash
-# recommended — isolated tool install
-uv tool install mlx-qwen3-asr
+# recommended — isolated tool install on a current Python
+uv tool install --python 3.12 mlx-qwen3-asr
 
 # with speaker labels (--diarize): adds pyannote + PyTorch
-uv tool install "mlx-qwen3-asr[diarize]"
+uv tool install --python 3.12 "mlx-qwen3-asr[diarize]"
 
 # or with pipx
 pipx install mlx-qwen3-asr
 ```
+
+> **Use Python 3.12+ for the tool.** On a Python 3.10 tool environment, pip resolves
+> an older SciPy build whose binary recent macOS (27) refuses to load, so `--diarize`
+> fails on import even though everything is "installed". `media-transcribe --doctor
+> --diarize` catches this by actually importing pyannote; the fix is
+> `uv tool install --reinstall --python 3.12 "mlx-qwen3-asr[diarize]"`.
 
 Either way `mlx-qwen3-asr` lands on your PATH (typically `~/.local/bin`). Use **0.4.4 or
 newer** — it is several times faster than 0.3.x and its diarization runs the newer
@@ -52,7 +58,8 @@ caches it; subsequent runs are offline.
 
 Later runs need no token: when none is set and the pipeline is in the Hugging Face cache,
 media-transcribe points `mlx-qwen3-asr` at the cached copy (`PYANNOTE_MODEL_ID`). Setting
-`PYANNOTE_MODEL_ID` yourself (a model id or a local folder) takes precedence.
+`PYANNOTE_MODEL_ID` yourself (a model id or a local folder; `~` is expanded) takes
+precedence. A Hub mirror set through `HF_ENDPOINT` is used for downloads and by `--doctor`.
 
 ## 4. Smoke test through media-transcribe
 

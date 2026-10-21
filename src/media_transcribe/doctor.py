@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import re
+import inspect
 import shutil
 import sys
 from typing import Callable
 
 from . import __version__
-from .engines.base import Check, Options, get_engine
+from .engines.base import FEATURE_TIMESTAMPS, Check, Options, get_engine
+from .redact import redact
+from .render import TIMED_FORMATS
 
-_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{6,}")
 
-
-def collect(engine_name: str, options: Options) -> list[Check]:
+def collect(engine_name: str, options: Options, *, language: str | None = None,
+            fmt: str = "txt") -> list[Check]:
     py = sys.version_info
     checks = [
         Check("ok", "media-transcribe", __version__),
@@ -27,21 +28,30 @@ def collect(engine_name: str, options: Options) -> list[Check]:
         engine = get_engine(engine_name)
     except KeyError as e:
         return checks + [Check("fail", "engine", str(e).strip("'\""))]
-    missing = options.requested_features() - set(getattr(engine, "features", ()))
+    timed = options.timestamps or options.diarize or fmt in TIMED_FORMATS
+    needed = options.requested_features() | ({FEATURE_TIMESTAMPS} if timed else set())
+    missing = needed - set(getattr(engine, "features", ()))
     if missing:
         checks.append(Check("fail", f"engine {engine_name}",
                             f"does not support: {', '.join(sorted(missing))}"))
     try:
-        checks += engine.doctor(options)
+        # Pass only the context an engine's doctor() accepts (both are optional).
+        try:
+            accepted = inspect.signature(engine.doctor).parameters
+        except (TypeError, ValueError):
+            accepted = {}
+        extra = {k: v for k, v in (("language", language), ("timed", timed)) if k in accepted}
+        checks += engine.doctor(options, **extra)
     except Exception as e:  # noqa: BLE001 - a broken engine check must not hide the others
-        reason = _TOKEN_RE.sub("hf_***", str(e))  # never echo an access token
-        checks.append(Check("fail", f"engine {engine_name}", f"doctor check crashed: {reason}"))
+        checks.append(Check("fail", f"engine {engine_name}",
+                            f"doctor check crashed: {redact(str(e))}"))
     return checks
 
 
-def run(engine_name: str, options: Options, log: Callable[[str], None] = print) -> int:
+def run(engine_name: str, options: Options, log: Callable[[str], None] = print, *,
+        language: str | None = None, fmt: str = "txt") -> int:
     """Print every check; exit 2 if anything is broken, else 0."""
-    checks = collect(engine_name, options)
+    checks = collect(engine_name, options, language=language, fmt=fmt)
     for c in checks:
         tag = f"[{c.status.upper()}]"
         log(f"{tag:<7} {c.label}: {c.detail}" if c.detail else f"{tag:<7} {c.label}")

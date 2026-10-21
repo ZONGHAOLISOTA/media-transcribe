@@ -19,22 +19,37 @@ def _hf_home() -> Path:
     return Path(base).expanduser() / "huggingface"
 
 
-def token() -> str:
+LOGIN = "hf auth login"  # token_source() name for the stored-login token file
+
+
+def token_source() -> tuple[str, str]:
+    """``(token, where it came from)`` — a variable name or ``LOGIN``; ``("", "")`` if none."""
     for var in TOKEN_VARS:
         value = os.environ.get(var, "").strip()
         if value:
-            return value
+            return value, var
     path = Path(os.environ.get("HF_TOKEN_PATH") or _hf_home() / "token").expanduser()
     try:
-        return path.read_text(encoding="utf-8").strip()
+        value = path.read_text(encoding="utf-8").strip()
     except OSError:
-        return ""
+        return "", ""
+    return (value, LOGIN) if value else ("", "")
+
+
+def token() -> str:
+    return token_source()[0]
+
+
+def endpoint() -> str:
+    """The Hub base URL; a mirror set through ``HF_ENDPOINT`` is honoured like huggingface_hub does."""
+    return (os.environ.get("HF_ENDPOINT") or "https://huggingface.co").rstrip("/")
 
 
 def cache_dir() -> Path:
     """The hub cache directory, following huggingface_hub's environment variables."""
-    if os.environ.get("HF_HUB_CACHE"):
-        return Path(os.environ["HF_HUB_CACHE"]).expanduser()
+    for var in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if os.environ.get(var):
+            return Path(os.environ[var]).expanduser()
     return _hf_home() / "hub"
 
 
@@ -71,7 +86,7 @@ def check_access(repo_id: str, filename: str, tok: str, timeout: float = 10.0) -
     """
     if not tok.isprintable() or any(ch.isspace() for ch in tok):
         return "unauthorized", "token contains spaces or control characters"
-    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    url = f"{endpoint()}/{repo_id}/resolve/main/{filename}"
     req = urllib.request.Request(url, method="HEAD", headers={"Authorization": f"Bearer {tok}"})
     try:
         with _OPENER.open(req, timeout=timeout):

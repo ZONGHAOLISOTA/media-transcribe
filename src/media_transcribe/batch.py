@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -11,6 +13,7 @@ from typing import Callable
 from . import media, render
 from .clean import clean, clean_segments
 from .engines.base import Engine, Options
+from .redact import redact
 
 
 @dataclass
@@ -50,11 +53,30 @@ def plan(root: Path, files: list[Path], out_dir: Path, suffix: str = ".txt") -> 
 
 
 def find_collisions(items: list[Item]) -> dict[Path, list[Path]]:
-    """Return {target: [srcs]} for any target reached by more than one input."""
-    seen: dict[Path, list[Path]] = {}
+    """Return {target: [srcs]} for any target reached by more than one input.
+
+    Targets are compared ignoring case and Unicode normalization, as the default
+    macOS file system does: "Talk.txt" and "talk.txt" are the same file there.
+    """
+    seen: dict[str, tuple[Path, list[Path]]] = {}
     for it in items:
-        seen.setdefault(it.target, []).append(it.src)
-    return {t: srcs for t, srcs in seen.items() if len(srcs) > 1}
+        key = unicodedata.normalize("NFC", str(it.target)).casefold()
+        seen.setdefault(key, (it.target, []))[1].append(it.src)
+    return {target: srcs for target, srcs in seen.values() if len(srcs) > 1}
+
+
+def _write_atomic(target: Path, text: str) -> None:
+    """Write via a short temp name in the same folder, then rename into place, so an
+    interrupted run never leaves a partial file that resume would count as done."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".mt-", suffix=".part")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _process_one(
@@ -135,18 +157,18 @@ def run(
                 it, engine=engine, language=language, context_terms=context_terms,
                 options=options, fmt=fmt,
             )
-            it.target.parent.mkdir(parents=True, exist_ok=True)
-            # Write then rename, so an interrupted run never leaves a partial file
-            # that the resume check would mistake for a finished transcript.
-            part = it.target.with_name(it.target.name + ".part")
-            part.write_text(text, encoding="utf-8")
-            part.replace(it.target)
+            _write_atomic(it.target, text)
             results.append(Result(str(it.src), str(it.target), "done"))
         except Exception as e:  # noqa: BLE001 - record and continue the batch
             failures += 1
-            log(f"{prefix}  FAILED: {e}")
-            results.append(Result(str(it.src), str(it.target), "failed", str(e)))
+            reason = redact(str(e))  # an engine error may echo an access token
+            log(f"{prefix}  FAILED: {reason}")
+            results.append(Result(str(it.src), str(it.target), "failed", reason))
 
     if not dry_run:
-        _write_manifest(out_dir, results)
+        try:
+            _write_manifest(out_dir, results)
+        except OSError as e:
+            log(f"warning: could not write {out_dir / '.media-transcribe' / 'run.json'}: {e}")
+            failures += 1
     return results, (1 if failures else 0)

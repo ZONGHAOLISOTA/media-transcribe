@@ -58,6 +58,13 @@ def test_zero_length_cue_is_stretched_but_stops_at_the_next():
     assert "00:00:01,600 --> 00:00:02,600\nSpeaker 1: Then." in srt
 
 
+def test_turn_join_spaces_cjk_and_latin_like_the_asr():
+    segs = [Segment("然后用", 0, 1, "A"), Segment("Python 写。", 1, 2, "A"),
+            Segment("好的，", 2, 3, "A"), Segment("这样。", 3, 4, "A")]
+    out = render_segments(segs, fmt="txt", language="zh", timestamps=False)
+    assert out == "说话人 1：然后用 Python 写。好的，这样。\n"
+
+
 def test_txt_without_speakers_or_timestamps_is_running_text():
     segs = [Segment("One.", 0, 1), Segment("Two.", 1, 2)]
     assert render_segments(segs, fmt="txt", language="en", timestamps=False) == "One. Two.\n"

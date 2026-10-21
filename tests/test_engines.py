@@ -1,5 +1,6 @@
 import json
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -74,7 +75,7 @@ def test_plain_transcribe_pins_default_model(monkeypatch):
     cmd = fake.calls[0]
     assert cmd[cmd.index("--model") + 1] == "Qwen/Qwen3-ASR-0.6B"
     assert cmd[cmd.index("--language") + 1] == "Chinese"
-    assert "--stdout-only" in cmd and cmd[cmd.index("--context") + 1] == "数据"
+    assert "--stdout-only" in cmd and "--context=数据" in cmd
 
 
 def test_segments_mode_builds_speaker_segments(monkeypatch, tmp_path):
@@ -111,16 +112,49 @@ def test_timed_run_without_word_timings_fails_clearly(monkeypatch, tmp_path):
             tmp_path / "a.wav", language="zh", context=None, options=Options(timestamps=True))
 
 
-def test_min_speakers_above_upstream_default_max_sends_a_max(monkeypatch, tmp_path):
+@pytest.mark.parametrize("min_speakers,expected_max", [(3, None), (8, "16"), (9, "17")])
+def test_min_speakers_keeps_detection_open(monkeypatch, tmp_path, min_speakers, expected_max):
+    # "At least N" must not become "exactly N" via upstream's default max of 8.
     payload = {"text": "好。", "segments": [{"text": "好", "start": 0, "end": .5, "speaker": "S"}]}
     fake = _FakeRun(payload=payload)
     monkeypatch.setattr(qwen_mlx.subprocess, "run", fake)
     monkeypatch.setattr(qwen_mlx, "_diarization_env", lambda: None)
     qwen_mlx.QwenMlxEngine().transcribe_segments(
         tmp_path / "a.wav", language="zh", context=None,
-        options=Options(diarize=True, min_speakers=9))
+        options=Options(diarize=True, min_speakers=min_speakers))
     cmd = fake.calls[0]
-    assert cmd[cmd.index("--max-speakers") + 1] == "9"
+    got = cmd[cmd.index("--max-speakers") + 1] if "--max-speakers" in cmd else None
+    assert got == expected_max
+
+
+@pytest.mark.parametrize("code,name", [
+    ("zh", "Chinese"), ("zh-Hant", "Chinese"), ("zh_CN", "Chinese"), ("zh-HK", "Chinese"),
+    ("en", "English"), ("ja-jp", "ja-jp"), ("fr", "fr"),
+])
+def test_language_codes_sent_upstream(code, name):
+    assert qwen_mlx.upstream_language(code) == name
+
+
+def test_context_starting_with_a_dash_is_passed_safely(monkeypatch):
+    fake = _FakeRun()
+    monkeypatch.setattr(qwen_mlx.subprocess, "run", fake)
+    qwen_mlx.QwenMlxEngine().transcribe(Path("a.wav"), language="en", context=["-O2", "gcc"])
+    assert "--context=-O2 gcc" in fake.calls[0]
+
+
+def test_engine_error_never_carries_a_token(monkeypatch):
+    def failing(cmd, capture_output, text, env=None, **kw):
+        return subprocess.CompletedProcess(cmd, 1, "", "Illegal header value b'Bearer hf_SECRETSECRET'")
+    monkeypatch.setattr(qwen_mlx.subprocess, "run", failing)
+    with pytest.raises(RuntimeError) as e:
+        qwen_mlx.QwenMlxEngine().transcribe(Path("a.wav"), language="en", context=None)
+    assert "SECRET" not in str(e.value) and "hf_***" in str(e.value)
+
+
+def test_tilde_in_pyannote_model_id_is_expanded(monkeypatch):
+    monkeypatch.setenv("PYANNOTE_MODEL_ID", "~/models/pyannote")
+    env = qwen_mlx._diarization_env()
+    assert env["PYANNOTE_MODEL_ID"] == str(Path("~/models/pyannote").expanduser())
 
 
 def test_home_relative_model_path_is_expanded():
@@ -166,6 +200,34 @@ def test_token_from_hf_login_file(monkeypatch, tmp_path):
     assert hf_cache.token() == ""
     (tmp_path / "token").write_text("hf_fromlogin\n", encoding="utf-8")
     assert hf_cache.token() == "hf_fromlogin"
+
+
+def test_token_source_names_where_it_came_from(monkeypatch, tmp_path):
+    for var in hf_cache.TOKEN_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("HF_TOKEN_PATH", str(tmp_path / "token"))
+    (tmp_path / "token").write_text("hf_login\n", encoding="utf-8")
+    assert hf_cache.token_source() == ("hf_login", hf_cache.LOGIN)
+    monkeypatch.setenv("PYANNOTE_AUTH_TOKEN", "hf_env")
+    assert hf_cache.token_source() == ("hf_env", "PYANNOTE_AUTH_TOKEN")
+
+
+def test_cache_dir_honours_the_legacy_variable(monkeypatch, tmp_path):
+    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path))
+    assert hf_cache.cache_dir() == tmp_path
+
+
+def test_check_access_goes_through_hf_endpoint(monkeypatch):
+    seen = {}
+
+    def fake_open(req, timeout):
+        seen["url"] = req.full_url
+        raise urllib.error.HTTPError(req.full_url, 302, "Found", {}, None)
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf-mirror.example/")
+    monkeypatch.setattr(hf_cache._OPENER, "open", fake_open)
+    assert hf_cache.check_access("org/repo", "config.yaml", "hf_abc")[0] == "ok"
+    assert seen["url"] == "https://hf-mirror.example/org/repo/resolve/main/config.yaml"
 
 
 def test_malformed_token_is_rejected_without_echoing_it():

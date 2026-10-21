@@ -8,16 +8,22 @@ lands in exactly one segment — nothing is dropped. A word that still cannot be
 found keeps the stretch of text up to the next word that can, so its own time and
 speaker stay attached to it.
 
-A new segment starts at a sentence end or a speaker change. A sentence longer than
-``MAX_SEG_SEC`` or ``MAX_SEG_CELLS`` is also split at its next clause mark (，,；;：、),
-or anywhere once it reaches twice those limits, so timed lines and subtitle cues
-stay readable; a speaker's turn is re-joined when rendered as text.
+A new segment starts at a sentence end, a pause of ``PAUSE_SEC`` or more, or a
+speaker change. A sentence longer than ``MAX_SEG_SEC`` or ``MAX_SEG_CELLS`` is also
+split at its next clause mark (，,；;：、), or anywhere once it reaches twice those
+limits, so timed lines and subtitle cues stay readable; a speaker's turn is
+re-joined when rendered as text.
 
 Diarization turn boundaries are only accurate to a few hundred milliseconds, so a
 speaker change often clips a word or two off the edge of a sentence ("问题不大 / 的。").
-Inside a sentence, a speaker run shorter than ``MIN_RUN_SEC`` is merged into its
-longer neighbour. A whole short sentence ("Yeah.") keeps its own label, since short
+Inside a sentence (or, for unpunctuated output, between pauses), a speaker run
+shorter than ``MIN_RUN_SEC`` is merged into its longer neighbour. A whole short
+sentence ("Yeah.") or a reply set off by pauses keeps its own label, since short
 replies are real turns.
+
+Matching stays local so one bad word cannot shift everything after it: a
+single-character CJK word is only looked for within a few characters, and words
+made only of punctuation are not looked for at all.
 """
 
 from __future__ import annotations
@@ -28,12 +34,14 @@ from typing import Mapping, Sequence
 
 from .datatypes import Segment
 
-_TERMINATORS = set(".?!。？！…")
+TERMINATORS = set(".?!。？！…؟।॥۔")
 _CLOSERS = set("\"'”’」』）)】》〉]")
 _CLAUSE = set("，,；;：:、")
 _ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs"}
 _SEARCH_WINDOW = 50   # chars to look ahead when a word does not match in place
+_CJK_WINDOW = 8       # ...for a single CJK character, which must be close by
 MIN_RUN_SEC = 0.6     # shorter in-sentence speaker runs are treated as boundary noise
+PAUSE_SEC = 1.0       # a silence this long separates sentences when punctuation is missing
 MAX_SEG_SEC = 6.0     # longer sentences split at a clause mark (subtitle convention)
 MAX_SEG_CELLS = 42    # display width; a CJK character counts as two
 
@@ -47,8 +55,12 @@ def _skippable(ch: str) -> bool:
     return not ch.isalnum() and not ch.isspace()
 
 
+def _wide(ch: str) -> bool:
+    return unicodedata.east_asian_width(ch) in ("W", "F")
+
+
 def _cells(s: str) -> int:
-    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+    return sum(2 if _wide(c) else 1 for c in s)
 
 
 def _match(text: str, pos: int, chars: list[str]) -> int:
@@ -76,8 +88,9 @@ def _latin(ch: str) -> bool:
 def _find(text: str, pos: int, chars: list[str], window: int) -> tuple[int, int]:
     """(start, end) of ``chars`` within ``window`` chars of ``pos``; (-1, -1) if absent.
 
-    A Latin word only matches at a word start, so a short word ("a") cannot
-    latch onto the middle of a longer one ("cat") while searching ahead.
+    While searching ahead, a Latin word only matches at a word start, so a short
+    word ("a") cannot latch onto the middle of a longer one ("cat"); right at
+    ``pos`` it may be glued to the previous word (chunks joined without a space).
     """
     n = len(text)
     first = _fold(chars[0])
@@ -86,7 +99,7 @@ def _find(text: str, pos: int, chars: list[str], window: int) -> tuple[int, int]
     for start in range(pos, min(n, pos + window)):
         if _fold(text[start]) != first:
             continue
-        if _latin(chars[0]) and start > 0 and _latin(text[start - 1]):
+        if start > pos and _latin(chars[0]) and _latin(text[start - 1]):
             continue
         end = _match(text, start, chars)
         if end >= 0:
@@ -108,7 +121,12 @@ def locate(text: str, words: Sequence[Mapping]) -> list[tuple[int, int]]:
     missed = 0  # chars of words skipped since the last match: widen the search by that
     for w in words:
         chars = [c for c in str(w.get("text", "")) if not c.isspace()]
-        start, end = _find(text, i, chars, _SEARCH_WINDOW + missed) if chars else (-1, -1)
+        if not any(c.isalnum() for c in chars):  # punctuation-only token: owns no text
+            found.append((i, i))
+            continue
+        local = len(chars) == 1 and _wide(chars[0])
+        window = (_CJK_WINDOW if local else _SEARCH_WINDOW) + missed
+        start, end = _find(text, i, chars, window)
         if start < 0:
             found.append(None)
             missed += len(chars) + 1
@@ -147,7 +165,7 @@ def _ends_sentence(text: str, start: int, end: int) -> bool:
     p = end - 1
     while p >= start and (text[p] in _CLOSERS or text[p].isspace()):
         p -= 1
-    if p < start or text[p] not in _TERMINATORS:
+    if p < start or text[p] not in TERMINATORS:
         return False
     if text[p] != ".":
         return True
@@ -176,7 +194,8 @@ def _runs(labels: list, lo: int, hi: int) -> list[tuple[int, int]]:
 
 
 def smooth_speakers(words: Sequence[Mapping], labels: list, ends: list[bool]) -> list:
-    """Merge in-sentence speaker runs shorter than ``MIN_RUN_SEC`` into a neighbour.
+    """Merge speaker runs shorter than ``MIN_RUN_SEC`` into a neighbour, within each
+    stretch closed by ``ends`` (sentence ends and pauses).
 
     The shortest run goes first, so a label flickering on single characters is
     absorbed before it can drag a longer run along with it.
@@ -209,7 +228,10 @@ def build_segments(text: str, words: Sequence[Mapping]) -> list[Segment]:
     if not words:
         return [Segment(text.strip(), 0.0, 0.0)] if text.strip() else []
     spans = locate(text, words)
-    ends = [_ends_sentence(text, s, e) for s, e in spans]
+    ends = [_ends_sentence(text, s, e)
+            or (k + 1 < len(words)
+                and float(words[k + 1]["start"]) - float(words[k]["end"]) >= PAUSE_SEC)
+            for k, (s, e) in enumerate(spans)]
     speakers = smooth_speakers(words, [w.get("speaker") for w in words], ends)
 
     segments: list[Segment] = []

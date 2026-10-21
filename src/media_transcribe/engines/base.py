@@ -62,8 +62,13 @@ class Engine(ABC):
         """
         raise NotImplementedError(f"engine {self.name!r} does not produce timed segments")
 
-    def doctor(self, options: Options) -> list[Check]:
-        """Environment checks for ``media-transcribe --doctor``. Override to add more."""
+    def doctor(self, options: Options, *, language: str | None = None,
+               timed: bool = False) -> list[Check]:
+        """Environment checks for ``media-transcribe --doctor``. Override to add more.
+
+        ``language`` is the run's ``--lang``; ``timed`` is True when the run needs
+        timestamps (``--timestamps``, ``--diarize`` or a timed output format).
+        """
         ok, reason = self.is_available()
         return [Check("ok" if ok else "fail", f"engine {self.name}", reason or "available")]
 

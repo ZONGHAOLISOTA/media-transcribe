@@ -66,9 +66,12 @@ class MyEngine(Engine):
 
 ### `--doctor`
 
-Override `doctor(options)` to add environment checks; return a list of
-`Check(status, label, detail)` with status `"ok"`, `"warn"` or `"fail"`, and put the fix
-command in `detail`. The default reports `is_available()`.
+Override `doctor(options, *, language=None, timed=False)` to add environment checks;
+return a list of `Check(status, label, detail)` with status `"ok"`, `"warn"` or `"fail"`,
+and put the fix command in `detail`. `language` is the run's `--lang`; `timed` is true
+when the run needs timestamps. Both keyword arguments are optional — the core passes only
+the ones your signature accepts. The default reports `is_available()`. Prefer checks that
+exercise the real thing (import the module, start the binary) over "is it installed".
 
 ## Option A — built-in (inside this repo)
 

@@ -174,6 +174,34 @@ def test_non_utf8_context_file_exits_2(tmp_path):
     assert main([str(tmp_path), "--context-file", str(vocab), "--dry-run"]) == 2
 
 
+def test_null_language_means_the_default(tmp_path, capsys):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("language: null\n", encoding="utf-8")
+    assert main([str(tmp_path), "--config", str(cfg), "--dry-run", "-v"]) == 0
+    assert "lang=zh" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("yaml_text", ["engine: [a, b]\n", "language: [zh, en]\n"])
+def test_non_text_engine_or_language_exits_2(tmp_path, yaml_text):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(yaml_text, encoding="utf-8")
+    assert main([str(tmp_path), "--config", str(cfg), "--dry-run"]) == 2
+
+
+def test_unwritable_output_folder_exits_2(tmp_path, capsys):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    out = tmp_path / "locked"
+    out.mkdir()
+    out.chmod(0o500)
+    try:
+        assert main([str(tmp_path), "--engine", "plain-only-test", "--out", str(out)]) == 2
+    finally:
+        out.chmod(0o700)
+    assert "not writable" in capsys.readouterr().err
+
+
 def test_verbose_prints_the_settings(tmp_path, capsys):
     (tmp_path / "a.mp4").write_bytes(b"x")
     assert main([str(tmp_path), "--dry-run", "-v", "--diarize", "--num-speakers", "2",

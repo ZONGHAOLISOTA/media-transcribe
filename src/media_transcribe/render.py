@@ -39,11 +39,23 @@ def _cjk(ch: str) -> bool:
     return "⺀" <= ch <= "鿿" or "豈" <= ch <= "﫿" or "＀" <= ch <= "￯"
 
 
+def _ideograph(ch: str) -> bool:
+    return "㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿"
+
+
 def _join(left: str, right: str) -> str:
-    """Concatenate two pieces of transcript, adding a space only between non-CJK text."""
+    """Concatenate two pieces of transcript the way the ASR spaces them.
+
+    Latin text gets a space; CJK punctuation none; an ideograph next to a Latin
+    letter or digit gets one ("固定的 intensity"), as Qwen3-ASR writes it.
+    """
     if not left or not right:
         return left + right
-    if _cjk(left[-1]) or _cjk(right[0]):
+    a, b = left[-1], right[0]
+    if (_ideograph(a) and b.isascii() and b.isalnum()) or \
+            (a.isascii() and a.isalnum() and _ideograph(b)):
+        return f"{left} {right}"
+    if _cjk(a) or _cjk(b):
         return left + right
     return f"{left} {right}"
 
