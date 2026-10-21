@@ -309,6 +309,43 @@ def test_refused_token_hint_names_the_variable_in_use(no_token_env, monkeypatch)
     assert "export PYANNOTE_AUTH_TOKEN" in detail and "export HF_TOKEN" not in detail
 
 
+class _TokenInReason(_OkEngine):
+    name = "doctor-token-reason"
+
+    def is_available(self):
+        return False, "Authentication failed for hf_abcdefghijklmnopqrstuvwxyz123456"
+
+
+class _DiarizeOnly(_OkEngine):
+    name = "doctor-diarize-only"
+    features = frozenset({"diarize"})
+
+
+register(_TokenInReason())
+register(_DiarizeOnly())
+
+
+def test_doctor_output_redacts_tokens_in_returned_checks(monkeypatch):
+    # Not only crashes: an ordinary failed check may quote a token too (Codex P1).
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/bin/{name}")
+    lines = []
+    assert doctor.run("doctor-token-reason", Options(), log=lines.append) == 2
+    assert not any("abcdefghijklmnop" in line for line in lines)
+    assert any("hf_***" in line for line in lines)
+
+
+def test_doctor_feature_requirements_match_the_run(monkeypatch, tmp_path):
+    # An engine with "diarize" but not "timestamps" can run --diarize, so the doctor
+    # must not call that setup broken (Codex P2).
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/bin/{name}")
+    checks = doctor.collect("doctor-diarize-only", Options(diarize=True))
+    assert not any("does not support" in c.detail for c in checks)
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    assert main([str(tmp_path), "--engine", "doctor-diarize-only", "--diarize", "--dry-run"]) == 0
+    timed = doctor.collect("doctor-diarize-only", Options(diarize=True), fmt="srt")
+    assert any("does not support: timestamps" in c.detail for c in timed)
+
+
 def test_doctor_flags_a_feature_the_engine_lacks(monkeypatch):
     monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/bin/{name}")
     checks = doctor.collect("doctor-ok", Options(diarize=True))

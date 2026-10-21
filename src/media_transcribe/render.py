@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from .datatypes import Options, Segment
+from .datatypes import FEATURE_TIMESTAMPS, Options, Segment
 
 FORMATS = ("txt", "srt", "vtt", "json", "tsv")
 TIMED_FORMATS = ("srt", "vtt", "tsv")  # need timestamps whatever the flags say
@@ -18,6 +18,12 @@ MIN_CUE_SEC = 1.0  # aligner words can be zero-length; players skip such cues
 
 def needs_segments(options: Options, fmt: str) -> bool:
     return options.timestamps or options.diarize or fmt in TIMED_FORMATS
+
+
+def required_features(options: Options, fmt: str) -> set[str]:
+    """Engine features a run needs: the ones its options ask for, plus timestamps for a
+    timed format. The single rule shared by the run and ``--doctor``."""
+    return options.requested_features() | ({FEATURE_TIMESTAMPS} if fmt in TIMED_FORMATS else set())
 
 
 def _is_chinese(language: str) -> bool:

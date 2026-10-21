@@ -9,9 +9,10 @@ from pathlib import Path
 
 from . import __version__
 from .config import load_config
-from .engines.base import FEATURE_TIMESTAMPS, Options, available_engines, get_engine
+from .engines.base import Options, available_engines, get_engine
 from .media import is_media
-from .render import FORMATS, TIMED_FORMATS
+from .redact import redact
+from .render import FORMATS, required_features
 
 EXAMPLES = """\
 examples:
@@ -244,15 +245,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    needed = options.requested_features() | (
-        {FEATURE_TIMESTAMPS} if fmt in TIMED_FORMATS else set())
-    missing = needed - set(getattr(engine, "features", ()))
+    missing = required_features(options, fmt) - set(getattr(engine, "features", ()))
     if missing:
         print(f"error: engine {engine_name!r} does not support: "
               f"{', '.join(sorted(missing))}", file=sys.stderr)
         return 2
 
     ok, reason = engine.is_available()
+    reason = redact(reason)  # an engine's reason may quote an error carrying a token
     if not ok:
         if args.dry_run:
             print(f"warning: engine {engine_name!r} unavailable: {reason} "

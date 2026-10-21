@@ -20,6 +20,24 @@ class _PlainOnlyEngine(Engine):
 register(_PlainOnlyEngine())
 
 
+class _UnavailableEngine(_PlainOnlyEngine):
+    name = "unavailable-test"
+
+    def is_available(self):
+        return False, "login failed with hf_abcdefghijklmnopqrstuvwxyz123456"
+
+
+register(_UnavailableEngine())
+
+
+@pytest.mark.parametrize("extra,code", [(["--dry-run"], 0), ([], 2)])
+def test_unavailable_engine_reason_is_redacted(tmp_path, capsys, extra, code):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    assert main([str(tmp_path), "--engine", "unavailable-test", *extra]) == code
+    err = capsys.readouterr().err
+    assert "abcdefghijklmnop" not in err and "hf_***" in err
+
+
 def test_missing_path_exits_2():
     assert main(["/no/such/path/xyz", "--dry-run"]) == 2
 
