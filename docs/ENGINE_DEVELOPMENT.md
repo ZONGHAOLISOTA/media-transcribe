@@ -23,6 +23,56 @@ class MyEngine(Engine):
         ...
 ```
 
+That is a complete engine. Everything below is optional.
+
+## Optional features
+
+An engine opts into extra options by listing them in `features`. The CLI rejects an
+option the selected engine does not declare (exit `2`), so nothing is silently ignored.
+
+| Feature | Unlocks | Implement |
+| --- | --- | --- |
+| `"model"` | `--model` | accept `options` in `transcribe` (and honour `options.model`) |
+| `"timestamps"` | `--timestamps`, `--format srt/vtt/tsv` | `transcribe_segments` |
+| `"diarize"` | `--diarize`, `--num/min/max-speakers` | `transcribe_segments` with `Segment.speaker` set |
+
+```python
+from media_transcribe.engines.base import Engine, Options, Segment
+
+
+class MyEngine(Engine):
+    name = "my-engine"
+    features = frozenset({"model", "timestamps", "diarize"})
+
+    def is_available(self) -> tuple[bool, str]:
+        ...
+
+    def transcribe(self, wav, *, language, context, options: Options | None = None) -> str:
+        ...
+
+    def transcribe_segments(self, wav, *, language, context, options: Options) -> list[Segment]:
+        # Sentence-sized segments in transcript order, with punctuation, start/end in
+        # seconds and (when options.diarize) an engine-local speaker id per segment.
+        ...
+```
+
+- `options` is passed to `transcribe` **only** when the user requested something, so
+  engines without the parameter keep working.
+- If your backend returns word timings plus a punctuated transcript (as forced aligners
+  do), `media_transcribe.segments.build_segments(text, words)` turns them into
+  punctuated, speaker-smoothed sentences — see `engines/qwen_mlx.py`.
+- Speaker ids are internal; the core numbers speakers by first appearance and renders
+  `说话人 1：` / `Speaker 1: `.
+
+### `--doctor`
+
+Override `doctor(options, *, language=None, timed=False)` to add environment checks;
+return a list of `Check(status, label, detail)` with status `"ok"`, `"warn"` or `"fail"`,
+and put the fix command in `detail`. `language` is the run's `--lang`; `timed` is true
+when the run needs timestamps. Both keyword arguments are optional — the core passes only
+the ones your signature accepts. The default reports `is_available()`. Prefer checks that
+exercise the real thing (import the module, start the binary) over "is it installed".
+
 ## Option A — built-in (inside this repo)
 
 1. Add `src/media_transcribe/engines/my_engine.py` implementing `Engine`, ending with
@@ -49,10 +99,11 @@ package is all it takes — **zero** changes to this repo.
 
 ## Contract notes
 
-- `transcribe` receives an already-normalized 16 kHz mono WAV; don't re-extract.
+- `transcribe` / `transcribe_segments` receive an already-normalized 16 kHz mono WAV;
+  don't re-extract.
 - Raise on failure (non-zero exit / empty output) — the batch records it and continues
   with the next file.
 - Cleaning (consecutive-duplicate collapse, context-echo strip) is done by the core in
-  `clean.py`; just return the raw text.
+  `clean.py`, and output formats by `render.py`; just return the raw text or segments.
 - A broken third-party engine is caught during discovery and skipped — it won't crash
   the tool, it simply won't appear in `--engine` choices.

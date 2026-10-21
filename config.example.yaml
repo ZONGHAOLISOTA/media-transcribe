@@ -1,7 +1,14 @@
 # media-transcribe configuration — all keys optional; CLI flags override these.
 engine: qwen-mlx
 language: zh
+model: null                  # null -> engine default (qwen-mlx: 0.6b); e.g. 1.7b, 1.7b-8bit
 context_file: null           # optional: path to a domain-vocab file (terms, whitespace/newline-separated)
 context: ""                  # inline terms, merged with context_file
+diarize: false               # label speakers ("说话人 1：" / "Speaker 1: ")
+num_speakers: null           # exact count, only if sure; or bound detection with min/max
+min_speakers: null
+max_speakers: null
+timestamps: false            # start lines with [hh:mm:ss]
+format: txt                  # txt | srt | vtt | json | tsv
 output_dir: null             # default: <input-dir>/transcripts. Set a path to override (taken as given, relative to cwd).
 recursive: false

@@ -11,8 +11,15 @@ from pathlib import Path
 DEFAULTS: dict = {
     "engine": "qwen-mlx",
     "language": "zh",
+    "model": None,        # None -> the engine's default (qwen-mlx: Qwen3-ASR-0.6B)
     "context_file": None,
     "context": "",
+    "diarize": False,
+    "num_speakers": None,
+    "min_speakers": None,
+    "max_speakers": None,
+    "timestamps": False,
+    "format": "txt",
     "output_dir": None,   # None -> <input-dir>/transcripts
     "recursive": False,
 }

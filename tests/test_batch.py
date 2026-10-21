@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from media_transcribe import batch
-from media_transcribe.engines.base import Engine
+from media_transcribe.engines.base import Engine, Options, Segment
 
 
 class _FakeEngine(Engine):
@@ -13,6 +13,25 @@ class _FakeEngine(Engine):
 
     def transcribe(self, wav, *, language, context):
         return "hello。hello。world。"
+
+
+class _FeatureEngine(Engine):
+    name = "fake-features"
+    features = frozenset({"model", "timestamps", "diarize"})
+
+    def __init__(self):
+        self.seen_options = []
+
+    def is_available(self):
+        return True, ""
+
+    def transcribe(self, wav, *, language, context, options=None):
+        self.seen_options.append(options)
+        return "plain。"
+
+    def transcribe_segments(self, wav, *, language, context, options):
+        return [Segment("我们开始吧。", 0.0, 1.0, "S0"), Segment("好。", 1.2, 1.5, "S1"),
+                Segment("好。", 1.5, 1.8, "S1")]
 
 
 def _touch(p: Path):
@@ -61,6 +80,100 @@ def test_run_writes_transcript_then_skips(tmp_path, monkeypatch):
         log=lambda m: None,
     )
     assert results2[0].status == "skipped"
+
+
+def _run(tmp_path, engine, overwrite=False, **kw):
+    return batch.run(
+        tmp_path, engine=engine, out_dir=tmp_path / "out", language="zh",
+        context_terms=[], recursive=False, overwrite=overwrite, dry_run=False,
+        log=lambda m: None, **kw,
+    )
+
+
+def test_diarized_run_writes_speaker_labels(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    results, code = _run(tmp_path, _FeatureEngine(), options=Options(diarize=True))
+    assert code == 0
+    text = (tmp_path / "out" / "ep1.txt").read_text(encoding="utf-8")
+    assert text == "说话人 1：我们开始吧。\n\n说话人 2：好。\n"   # duplicate "好。" collapsed
+
+
+def test_format_sets_extension(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    _run(tmp_path, _FeatureEngine(), fmt="srt")
+    assert (tmp_path / "out" / "ep1.srt").read_text(encoding="utf-8").startswith("1\n00:00:00,000")
+
+
+def test_options_reach_transcribe_only_when_requested(tmp_path, monkeypatch):
+    _touch(tmp_path / "a.mp4")
+    _touch(tmp_path / "b.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    eng = _FeatureEngine()
+    _run(tmp_path, eng)                                    # nothing requested
+    _run(tmp_path, eng, options=Options(model="1.7b"), overwrite=True)
+    assert eng.seen_options[0] is None
+    assert eng.seen_options[-1].model == "1.7b"
+
+
+def test_skip_hints_overwrite_and_no_part_file_is_left(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    _run(tmp_path, _FakeEngine())
+    assert [p.name for p in (tmp_path / "out").iterdir() if p.is_file()] == ["ep1.txt"]
+    logs = []
+    batch.run(tmp_path, engine=_FakeEngine(), out_dir=tmp_path / "out", language="zh",
+              context_terms=[], recursive=False, overwrite=False, dry_run=False,
+              log=logs.append)
+    assert any("--overwrite" in line for line in logs)
+
+
+def test_case_only_difference_is_a_collision(tmp_path):
+    # macOS file systems ignore case: Talk.txt and talk.txt are one file.
+    _touch(tmp_path / "Talk.mp4")
+    _touch(tmp_path / "talk.m4a")
+    items = batch.plan(tmp_path, batch.discover(tmp_path, recursive=False), tmp_path / "out")
+    assert len(batch.find_collisions(items)) == 1
+
+
+def test_long_file_name_is_written(tmp_path, monkeypatch):
+    stem = "x" * 247                        # target "<stem>.txt" is 251 characters
+    _touch(tmp_path / f"{stem}.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    results, code = _run(tmp_path, _FakeEngine())
+    assert code == 0 and (tmp_path / "out" / f"{stem}.txt").exists()
+    assert not [p for p in (tmp_path / "out").iterdir() if p.name.endswith(".part")]
+
+
+class _LeakyEngine(_FakeEngine):
+    name = "fake-leaky"
+
+    def transcribe(self, wav, *, language, context):
+        raise RuntimeError("GatedRepoError for Bearer hf_SECRETSECRETSECRET")
+
+
+def test_failure_reason_never_stores_a_token(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+    logs = []
+    batch.run(tmp_path, engine=_LeakyEngine(), out_dir=tmp_path / "out", language="zh",
+              context_terms=[], recursive=False, overwrite=False, dry_run=False,
+              log=logs.append)
+    manifest = (tmp_path / "out" / ".media-transcribe" / "run.json").read_text(encoding="utf-8")
+    assert "SECRET" not in manifest and "hf_***" in manifest
+    assert not any("SECRET" in line for line in logs)
+
+
+def test_unwritable_manifest_is_reported_not_raised(tmp_path, monkeypatch):
+    _touch(tmp_path / "ep1.mp4")
+    monkeypatch.setattr(batch.media, "extract_wav", lambda src, dst: dst)
+
+    def refuse(out_dir, results):
+        raise OSError("read-only file system")
+    monkeypatch.setattr(batch, "_write_manifest", refuse)
+    results, code = _run(tmp_path, _FakeEngine())
+    assert code == 1 and results[0].status == "done"
 
 
 def test_dry_run_does_not_write(tmp_path, monkeypatch):
